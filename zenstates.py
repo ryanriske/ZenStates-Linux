@@ -36,6 +36,7 @@ def readsmureg(reg):
 
 
 def writesmu(cmd, value=0):
+    res = False
     # clear the response register
     writesmureg(SMU_RSP_ADDR, 0)
     # write the value
@@ -43,7 +44,11 @@ def writesmu(cmd, value=0):
     writesmureg(SMU_ARG_ADDR + 4, 0)
     # send the command
     writesmureg(SMU_CMD_ADDR, cmd)
-    readsmureg(SMU_RSP_ADDR)
+    res = smuwaitdone()
+    if res:
+        return readsmureg(SMU_RSP_ADDR)
+    else:
+        return 0
 
 
 def readsmu(cmd):
@@ -51,6 +56,18 @@ def readsmu(cmd):
     writesmureg(SMU_CMD_ADDR, cmd)
     return readsmureg(SMU_ARG_ADDR)
 
+def smuwaitdone():
+    res = False
+    timeout = 1000
+    data = 0
+    while ((not res or data != 1) and timeout > 0):
+        timeout-=1
+        data = readsmureg(SMU_RSP_ADDR)
+        if data == 1:
+            res = True
+        if (timeout == 0 or data != 1):
+            res = False
+    return res
 
 def writemsr(msr, val, cpu=-1):
     try:
@@ -218,20 +235,20 @@ if _cpuid in [0x00870F10, 0x00870F10, 0x00830F00, 0x00830F10]:
 else:
     exit('CPU not supported!')
 
-parser = argparse.ArgumentParser(description='Sets P-States for Ryzen processors')
+parser = argparse.ArgumentParser(description='Dynamically edit AMD Ryzen processor parameters')
 parser.add_argument('-l', '--list', action='store_true', help='List all P-States')
-parser.add_argument('-p', '--pstate', default=-1, type=int,choices=range(8), help='P-State to set')
+parser.add_argument('--no-gui', action='store_true', help='Run in CLI without GUI')
+parser.add_argument('-p', '--pstate', default=-1, type=int, choices=range(8), help='P-State to set')
 parser.add_argument('--enable', action='store_true', help='Enable P-State')
 parser.add_argument('--disable', action='store_true', help='Disable P-State')
 parser.add_argument('-f', '--fid', default=-1, type=hex, help='FID to set (in hex)')
 parser.add_argument('-d', '--did', default=-1, type=hex, help='DID to set (in hex)')
 parser.add_argument('-v', '--vid', default=-1, type=hex, help='VID to set (in hex)')
-parser.add_argument('--no-gui', action='store_true',help='Run in CLI without GUI')
 parser.add_argument('--c6-enable', action='store_true', help='Enable C-State C6')
 parser.add_argument('--c6-disable', action='store_true', help='Disable C-State C6')
-parser.add_argument('--smu-test-message', action='store_true', help='Send test message to the SMU')
-parser.add_argument('--set-oc-frequency', default=550, type=int, help='SeOverclock frequency (in MHz)')
-parser.add_argument('--set-oc-vid', default=-1, type=hex, help='Set Overclock VID')
+parser.add_argument('--smu-test-message', action='store_true', help='Send test message to the SMU (response 1 means "success")')
+parser.add_argument('--oc-frequency', default=550, type=int, help='Set overclock frequency (in MHz)')
+parser.add_argument('--oc-vid', default=-1, type=hex, help='Set overclock VID')
 
 args = parser.parse_args()
 
@@ -279,22 +296,23 @@ if args.c6_disable:
     print('Disabling C6 state')
 
 if args.smu_test_message:
-    writesmu(0x1)
     print('Sending test SMU message')
+    print('SMU response: %X' % writesmu(0x1))
 
-if args.set_oc_frequency > 550:
+if args.oc_frequency > 550:
     writesmu(0x5c, args.set_oc_frequency)
     print('Set OC frequency to %sMHz' % args.set_oc_frequency)
 
-if args.set_oc_vid >= 0:
+if args.oc_vid >= 0:
     writesmu(0x61, args.set_oc_vid)
     print('Set OC VID to %X' % args.set_oc_vid)
 
-if not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable and args.no_gui:
+if not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable and not args.smu_test_message and args.no_gui:
     parser.print_help()
 
+
 ###############################
-# GUI options
+# GUI
 if not args.no_gui:
     import PySimpleGUI as sg
 
@@ -394,9 +412,10 @@ if not args.no_gui:
 
     # The TabgGroup layout - it must contain only Tabs
     tab_group_layout = [
-        [sg.Tab('CPU', tab1_layout, key='-TAB1-'),
-         sg.Tab('P-States', tab2_layout, key='-TAB2-'),
-         sg.Tab('Power', tab3_layout, key='-TAB3-')
+        [
+            sg.Tab('CPU', tab1_layout, key='-TAB1-'),
+            sg.Tab('P-States', tab2_layout, key='-TAB2-'),
+            sg.Tab('Power', tab3_layout, key='-TAB3-')
         ]
     ]
 
@@ -420,13 +439,16 @@ if not args.no_gui:
         else:
             writesmu(0x5b)
 
+
     def applyPstatesSettings():
         for p in range(0, 3):
             setPstateGui(p, values['pstate%sFid' % str(p)], values['pstate%sVid' % str(p)])
 
+
     def applyPowerSettings():
         setC6Core(values['c6StateCore'])
         setC6Package(values['c6StatePackage'])
+
 
     window_title = "%s v%s" % (APP_NAME, APP_VERSION)
     window = sg.Window(window_title, layout)
