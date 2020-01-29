@@ -300,12 +300,12 @@ if args.smu_test_message:
     print('SMU response: %X' % writesmu(0x1))
 
 if args.oc_frequency > 550:
-    writesmu(0x5c, args.set_oc_frequency)
-    print('Set OC frequency to %sMHz' % args.set_oc_frequency)
+    writesmu(0x5c, args.oc_frequency)
+    print('Set OC frequency to %sMHz' % args.oc_frequency)
 
 if args.oc_vid >= 0:
-    writesmu(0x61, args.set_oc_vid)
-    print('Set OC VID to %X' % args.set_oc_vid)
+    writesmu(0x61, args.oc_vid)
+    print('Set OC VID to %X' % args.oc_vid)
 
 if not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable and not args.smu_test_message and args.no_gui:
     parser.print_help()
