@@ -1,12 +1,75 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 import struct
 import os
 import glob
 import argparse
+import subprocess
+import cpuid
 
-pstates = range(0xC0010064, 0xC001006C)
+APP_NAME = 'ZenStates for Linux'
+APP_VERSION = '1.0'
 
-def writemsr(msr, val, cpu = -1):
+FID_MAX = 0xFF
+FID_MIN = 0x10
+VID_MAX = 0xC8 # 0.300V
+VID_MIN = 0x00
+
+PSTATES = range(0xC0010064, 0xC001006C)
+
+MSR_PMGT_MISC =         0xC0010292 # [32] PC6En
+MSR_CSTATE_CONFIG =     0xC0010296 # [22] CCR2_CC6EN [14] CCR1_CC6EN [6] CCR0_CC6EN
+MSR_HWCR =              0xC0010015
+SMU_CMD_ADDR =          0
+SMU_RSP_ADDR =          0
+SMU_ARG_ADDR =          0
+
+
+def writesmureg(reg, value=0):
+    subprocess.Popen(['setpci', '-v', '-s', '0:0.0', 'b8.l={:08X}'.format(reg)], stdout=subprocess.PIPE)
+    subprocess.Popen(['setpci', '-v', '-s', '0:0.0', 'bc.l={:08X}'.format(value)], stdout=subprocess.PIPE)
+
+
+def readsmureg(reg):
+    subprocess.Popen(['setpci', '-v', '-s', '0:0.0', 'b8.l={:08X}'.format(reg)], stdout=subprocess.PIPE)
+    p = subprocess.Popen(['setpci', '-v', '-s', '0:0.0', 'bc.l'], stdout=subprocess.PIPE)
+    return hex(p.stdout.readline()[-9:][0:8])
+
+
+def writesmu(cmd, value=0):
+    res = False
+    # clear the response register
+    writesmureg(SMU_RSP_ADDR, 0)
+    # write the value
+    writesmureg(SMU_ARG_ADDR, value)
+    writesmureg(SMU_ARG_ADDR + 4, 0)
+    # send the command
+    writesmureg(SMU_CMD_ADDR, cmd)
+    res = smuwaitdone()
+    if res:
+        return readsmureg(SMU_RSP_ADDR)
+    else:
+        return 0
+
+
+def readsmu(cmd):
+    writesmureg(SMU_RSP_ADDR, 0)
+    writesmureg(SMU_CMD_ADDR, cmd)
+    return readsmureg(SMU_ARG_ADDR)
+
+def smuwaitdone():
+    res = False
+    timeout = 1000
+    data = 0
+    while ((not res or data != 1) and timeout > 0):
+        timeout-=1
+        data = readsmureg(SMU_RSP_ADDR)
+        if data == 1:
+            res = True
+        if (timeout == 0 or data != 1):
+            res = False
+    return res
+
+def writemsr(msr, val, cpu=-1):
     try:
         if cpu == -1:
             for c in glob.glob('/dev/cpu/[0-9]*/msr'):
@@ -22,7 +85,8 @@ def writemsr(msr, val, cpu = -1):
     except:
         raise OSError("msr module not loaded (run modprobe msr)")
 
-def readmsr(msr, cpu = 0):
+
+def readmsr(msr, cpu=0):
     try:
         f = os.open('/dev/cpu/%d/msr' % cpu, os.O_RDONLY)
         os.lseek(f, msr, os.SEEK_SET)
@@ -32,34 +96,148 @@ def readmsr(msr, cpu = 0):
     except:
         raise OSError("msr module not loaded (run modprobe msr)")
 
+
 def pstate2str(val):
     if val & (1 << 63):
         fid = val & 0xff
-        did = (val & 0x3f00) >> 8
-        vid = (val & 0x3fc000) >> 14
+        did = val >> 8 & 0x3f
+        vid = val >> 14 & 0xff
         ratio = 25*fid/(12.5 * did)
-        vcore = 1.55 - 0.00625 * vid
+        vcore = vidToVolts(vid)
         return "Enabled - FID = %X - DID = %X - VID = %X - Ratio = %.2f - vCore = %.5f" % (fid, did, vid, ratio, vcore)
     else:
         return "Disabled"
 
+
+def pstateToGuiString(fid, did, vid):
+    ratio = 25 * int(fid)/(12.5 * int(did))
+    vcore = vidToVolts(vid)
+    return "Ratio = %.2f - vCore = %.5f" % (ratio, vcore)
+
+
+def getPstateFid(index):
+    return readmsr(PSTATES[index]) & 0xff
+
+
+def getPstateDid(index):
+    return readmsr(PSTATES[index]) >> 8 & 0x3f
+
+
+def getPstateVid(index):
+    return readmsr(PSTATES[index]) >> 14 & 0xff
+
+
+def getCurrentVid():
+    return readmsr(0xC0010293) >> 14 & 0xff
+
+
+def getPstateDetails(val):
+    fid = val & 0xff
+    did = val >> 8 & 0x3f
+    vid = val >> 14 & 0xff
+    return [fid, did, vid]
+
+
+def getRatio(msr):
+    val = readmsr(msr)
+    fid = val & 0xff
+    did = val >> 8 & 0x3f
+    return 25*fid/(12.5 * did)
+
+
+def calculateFrequencyFromFid(msr, fid):
+    did = readmsr(msr) >> 8 & 0x3f
+    if fid not in range(FID_MIN, FID_MAX):
+        fid = 0x88 # 1.00V
+    return int(25*fid/(12.5 * did) * 100)
+
+
+def vidToVolts(vid):
+    return 1.55 - vid * 0.00625
+
+
+def getCpuid():
+    eax, ebx, ecx, edx = cpuid.CPUID()(0x00000001)
+    print("CPUID: %08x" % eax)
+    return eax
+
+
+def getOcMode():
+    return readsmu(0x6c) == 0
+
+
+def getC6core():
+    return readmsr(MSR_CSTATE_CONFIG) & ((1 << 22) | (1 << 14) | (1 << 6)) == ((1 << 22) | (1 << 14) | (1 << 6))
+
+
+def getC6package():
+    return readmsr(MSR_PMGT_MISC) & (1 << 32) != 0
+
+
+def setC6Core(enable):
+    if not getC6core() and enable:
+        writemsr(MSR_CSTATE_CONFIG, readmsr(MSR_CSTATE_CONFIG) | ((1 << 22) | (1 << 14) | (1 << 6)))
+        print('GUI: Set C6-Core: %s' % str(enable))
+    elif getC6core() and not enable:
+        writemsr(MSR_CSTATE_CONFIG, readmsr(MSR_CSTATE_CONFIG) & ~ ((1 << 22) | (1 << 14) | (1 << 6)))
+        print('GUI: Set C6-Core: %s' % str(enable))
+
+
+def setC6Package(enable):
+    if not getC6package() and enable:
+        writemsr(MSR_PMGT_MISC, readmsr(MSR_PMGT_MISC) | (1 << 32))
+        print('GUI: Set C6-Package: %s' % str(enable))
+    elif getC6package() and  not enable:
+        writemsr(MSR_PMGT_MISC, readmsr(MSR_PMGT_MISC) & ~(1 << 32))
+        print('GUI: Set C6-Package: %s' % str(enable))
+
+
 def setbits(val, base, length, new):
     return (val ^ (val & ((2 ** length - 1) << base))) + (new << base)
+
 
 def setfid(val, new):
     return setbits(val, 0, 8, new)
 
+
 def setdid(val, new):
     return setbits(val, 8, 6, new)
+
 
 def setvid(val, new):
     return setbits(val, 14, 8, new)
 
+
 def hex(x):
     return int(x, 16)
 
-parser = argparse.ArgumentParser(description='Sets P-States for Ryzen processors')
+
+def setPstateGui(index, fid, vid):
+    new = old = readmsr(PSTATES[index])
+    if fid in range(FID_MIN, FID_MAX):
+        new = setfid(new, fid)
+    if vid in range(VID_MIN, VID_MAX):
+        new = setvid(new, vid)
+    if new != old:
+        if not (readmsr(MSR_HWCR) & (1 << 21)):
+            print('GUI: Locking TSC frequency')
+            for c in range(len(glob.glob('/dev/cpu/[0-9]*/msr'))):
+                writemsr(MSR_HWCR, readmsr(MSR_HWCR, c) | (1 << 21), c)
+        print('GUI: Set Pstate%s: %s' % (index, getPstateDetails(new)))
+        writemsr(PSTATES[index], new)
+
+_cpuid = getCpuid() & 0xFFFFFFF0
+# Matisse, Castle Peak, Rome
+if _cpuid in [0x00870F10, 0x00870F10, 0x00830F00, 0x00830F10]:
+    SMU_CMD_ADDR = 0x03B10524
+    SMU_RSP_ADDR = 0x03B10570
+    SMU_ARG_ADDR = 0x03B10A40
+else:
+    exit('CPU not supported!')
+
+parser = argparse.ArgumentParser(description='Dynamically edit AMD Ryzen processor parameters')
 parser.add_argument('-l', '--list', action='store_true', help='List all P-States')
+parser.add_argument('--no-gui', action='store_true', help='Run in CLI without GUI')
 parser.add_argument('-p', '--pstate', default=-1, type=int, choices=range(8), help='P-State to set')
 parser.add_argument('--enable', action='store_true', help='Enable P-State')
 parser.add_argument('--disable', action='store_true', help='Disable P-State')
@@ -68,17 +246,21 @@ parser.add_argument('-d', '--did', default=-1, type=hex, help='DID to set (in he
 parser.add_argument('-v', '--vid', default=-1, type=hex, help='VID to set (in hex)')
 parser.add_argument('--c6-enable', action='store_true', help='Enable C-State C6')
 parser.add_argument('--c6-disable', action='store_true', help='Disable C-State C6')
+parser.add_argument('--smu-test-message', action='store_true', help='Send test message to the SMU (response 1 means "success")')
+parser.add_argument('--oc-frequency', default=550, type=int, help='Set overclock frequency (in MHz)')
+parser.add_argument('--oc-vid', default=-1, type=hex, help='Set overclock VID')
 
 args = parser.parse_args()
 
 if args.list:
-    for p in range(len(pstates)):
-        print('P' + str(p) + " - " + pstate2str(readmsr(pstates[p])))
-    print('C6 State - Package - ' + ('Enabled' if readmsr(0xC0010292) & (1 << 32) else 'Disabled'))
-    print('C6 State - Core - ' + ('Enabled' if readmsr(0xC0010296) & ((1 << 22) | (1 << 14) | (1 << 6)) == ((1 << 22) | (1 << 14) | (1 << 6)) else 'Disabled'))
+    for p in range(len(PSTATES)):
+        print('P' + str(p) + " - " + pstate2str(readmsr(PSTATES[p])))
+    print('C6 State - Package - ' +
+          ('Enabled' if getC6package() else 'Disabled'))
+    print('C6 State - Core - ' + ('Enabled' if getC6core() else 'Disabled'))
 
 if args.pstate >= 0:
-    new = old = readmsr(pstates[args.pstate])
+    new = old = readmsr(PSTATES[args.pstate])
     print('Current P' + str(args.pstate) + ': ' + pstate2str(old))
     if args.enable:
         new = setbits(new, 63, 1, 1)
@@ -86,13 +268,13 @@ if args.pstate >= 0:
     if args.disable:
         new = setbits(new, 63, 1, 0)
         print('Disabling state')
-    if args.fid >= 0:
+    if args.fid in range(FID_MIN, FID_MAX):
         new = setfid(new, args.fid)
         print('Setting FID to %X' % args.fid)
     if args.did >= 0:
         new = setdid(new, args.did)
         print('Setting DID to %X' % args.did)
-    if args.vid >= 0:
+    if args.vid in range(VID_MIN, VID_MAX):
         new = setvid(new, args.vid)
         print('Setting VID to %X' % args.vid)
     if new != old:
@@ -101,17 +283,208 @@ if args.pstate >= 0:
             for c in range(len(glob.glob('/dev/cpu/[0-9]*/msr'))):
                 writemsr(0xC0010015, readmsr(0xC0010015, c) | (1 << 21), c)
         print('New P' + str(args.pstate) + ': ' + pstate2str(new))
-        writemsr(pstates[args.pstate], new)
+        writemsr(PSTATES[args.pstate], new)
 
 if args.c6_enable:
-    writemsr(0xC0010292, readmsr(0xC0010292) | (1 << 32))
-    writemsr(0xC0010296, readmsr(0xC0010296) | ((1 << 22) | (1 << 14) | (1 << 6)))
+    setC6Package(True)
+    setC6Core(True)
     print('Enabling C6 state')
 
 if args.c6_disable:
-    writemsr(0xC0010292, readmsr(0xC0010292) & ~(1 << 32))
-    writemsr(0xC0010296, readmsr(0xC0010296) & ~((1 << 22) | (1 << 14) | (1 << 6)))
+    setC6Package(False)
+    setC6Core(False)
     print('Disabling C6 state')
 
-if not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable:
+if args.smu_test_message:
+    print('Sending test SMU message')
+    print('SMU response: %X' % writesmu(0x1))
+
+if args.oc_frequency > 550:
+    writesmu(0x5c, args.set_oc_frequency)
+    print('Set OC frequency to %sMHz' % args.set_oc_frequency)
+
+if args.oc_vid >= 0:
+    writesmu(0x61, args.set_oc_vid)
+    print('Set OC VID to %X' % args.set_oc_vid)
+
+if not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable and not args.smu_test_message and args.no_gui:
     parser.print_help()
+
+
+###############################
+# GUI
+if not args.no_gui:
+    import PySimpleGUI as sg
+
+    _oc_mode = getOcMode()
+    if _oc_mode:
+        _default_vid = getCurrentVid()
+        _ratio = getRatio(0xC0010293)
+    else:
+        _default_vid = getPstateVid(0)
+        _ratio = getRatio(PSTATES[0])
+
+    _current_freq = int(_ratio * 100)
+
+    #sg.theme('Dark Teal 9')
+    sg.set_options(icon='icon.png', element_padding=(5, 5), margins=(1, 1), border_width=0)
+
+    # The tab 1, 2, 3 layouts - what goes inside the tab
+    tab1_layout = [
+        [sg.CBox('OC Mode', default=_oc_mode, key='ocMode', enable_events=True)],
+        [
+            sg.Text(' All Core Frequency', size=(18, 1)),
+            sg.Spin(
+                values=[x for x in range(550, 7000, 25)],
+                initial_value=_current_freq,
+                enable_events=True,
+                disabled=not _oc_mode,
+                size=(5, 1),
+                key='cpuOcFrequency'),
+            sg.Text('MHz'),
+        ],
+        [
+            sg.Text(' Overclock VID', size=(18, 1)),
+            sg.Spin(
+                values=[x for x in range(VID_MAX, VID_MIN, -1)],
+                initial_value=_default_vid,
+                enable_events=True,
+                disabled=not _oc_mode,
+                size=(5, 1),
+                key='cpuOcVid'),
+            sg.Text("%.5f V" % vidToVolts(_default_vid), key='cpuOcVoltageText'),
+        ],
+    ]
+
+    tab2_layout = [
+        [   
+            sg.Text('', size=(8, 1)),
+            sg.Text('FID', size=(6, 1)),
+            sg.Text('DID', size=(6, 1), visible=False),
+            sg.Text('VID', size=(6, 1))
+        ]
+    ]
+    for p in range(0, 3):
+        state = readmsr(PSTATES[p])
+        d = getPstateDetails(state)
+        tab2_layout.append([
+            sg.Text(' P-State%s' % str(p), size=(8, 1)),
+            sg.Spin(
+                values=[x for x in range(FID_MIN, FID_MAX, 1)],
+                initial_value=d[0],
+                enable_events=True,
+                size=(5, 1),
+                key='pstate%sFid' % str(p)
+            ),
+            sg.Spin(
+                values=[x for x in range(1, 14, -1)],
+                initial_value=d[1],
+                enable_events=False,
+                disabled=True,
+                visible=False,
+                size=(5, 1),
+                key='pstate%sDid' % str(p)
+            ),
+            sg.Spin(
+                values=[x for x in range(VID_MAX, VID_MIN, -1)],
+                initial_value=d[2],
+                enable_events=True,
+                size=(5, 1),
+                key='pstate%sVid' % str(p)
+            ),
+            sg.Text(pstateToGuiString(d[0], d[1], d[2]), key='pstateDetails%s' % str(p))
+        ])
+
+    tab3_layout = [
+        [sg.CBox(
+            'C6-State Package',
+            default=getC6package(),
+            enable_events=True,
+            key='c6StatePackage')
+         ],
+        [sg.CBox(
+            'C6-State Core',
+            default=getC6core(),
+            enable_events=True,
+            key='c6StateCore')
+         ]
+    ]
+
+    # The TabgGroup layout - it must contain only Tabs
+    tab_group_layout = [
+        [
+            sg.Tab('CPU', tab1_layout, key='-TAB1-'),
+            sg.Tab('P-States', tab2_layout, key='-TAB2-'),
+            sg.Tab('Power', tab3_layout, key='-TAB3-')
+        ]
+    ]
+
+    # The window layout - defines the entire window
+    layout = [
+        [sg.TabGroup(tab_group_layout,
+                     # selected_title_color='blue',
+                     # selected_background_color='red',
+                     # tab_background_color='green',
+                     enable_events=True,
+                     # font='Courier 18',
+                     key='-TABGROUP-')],
+        [sg.Button('Apply', key='applyBtn'), sg.Button('Cancel')]
+    ]
+
+    def applyCpuSettings():
+        if values['ocMode']:
+            writesmu(0x5a)
+            writesmu(0x5c, values['cpuOcFrequency'])
+            writesmu(0x61, values['cpuOcVid'])
+        else:
+            writesmu(0x5b)
+
+
+    def applyPstatesSettings():
+        for p in range(0, 3):
+            setPstateGui(p, values['pstate%sFid' % str(p)], values['pstate%sVid' % str(p)])
+
+
+    def applyPowerSettings():
+        setC6Core(values['c6StateCore'])
+        setC6Package(values['c6StatePackage'])
+
+
+    window_title = "%s v%s" % (APP_NAME, APP_VERSION)
+    window = sg.Window(window_title, layout)
+    print('GUI: %s initialized' % window_title)
+
+    while True:     # Event Loop
+        event, values = window.read()
+        # print(event)
+        # print(values)
+
+        # Cancel or close event
+        if event in (None, 'Cancel'):
+            break
+
+        # Apply button events
+        if event == 'applyBtn' and values['-TABGROUP-'] == '-TAB1-':
+            applyCpuSettings()
+        if event == 'applyBtn' and values['-TABGROUP-'] == '-TAB2-':
+            applyPstatesSettings()
+        if event == 'applyBtn' and values['-TABGROUP-'] == '-TAB3-':
+            applyPowerSettings()
+
+        # UI elements state change
+        if event == 'ocMode':
+            window['cpuOcFrequency'].update(disabled=(not values['ocMode']))
+            window['cpuOcVid'].update(disabled=(not values['ocMode']))
+        if event == 'cpuOcVid':
+            window['cpuOcVoltageText'].update("%.5f V" % vidToVolts(values['cpuOcVid']))
+
+        for p in range(0, 3):
+            if event in ['pstate%sFid' % str(p), 'pstate%sVid' % str(p)]:
+                window['pstateDetails%s' % str(p)].update(
+                    pstateToGuiString(
+                        values['pstate%sFid' % str(p)],
+                        values['pstate%sDid' % str(p)],
+                        values['pstate%sVid' % str(p)]
+                    )
+                )
+    window.close()
