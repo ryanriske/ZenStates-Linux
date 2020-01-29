@@ -6,6 +6,9 @@
   Current version supports Zen2-based CPUs only.
 
   Requires root access and the msr kernel module loaded (just run "modprobe msr" as root).
+  ```console
+  $ sudo modprobe msr
+  ```
 
   The utility is based on [r4m0n's ZenStates-Linux](https://github.com/r4m0n/ZenStates-Linux).
 
