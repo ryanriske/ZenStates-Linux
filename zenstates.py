@@ -468,7 +468,7 @@ if not args.no_gui:
                 disabled=False,
                 size=(5, 1),
                 key='ppt'),
-            sg.Text('A', size=(4, 1)),
+            sg.Text('W', size=(4, 1)),
             sg.Text(' TDC', size=(6, 1)),
             sg.Spin(
                 values=[x for x in range(0, 1000, 1)],
@@ -488,7 +488,7 @@ if not args.no_gui:
                 disabled=False,
                 size=(5, 1),
                 key='edc'),
-            sg.Text('W', size=(4, 1)),
+            sg.Text('A', size=(4, 1)),
             sg.Text(' Scalar', size=(6, 1)),
             sg.Spin(
                 values=[x for x in range(0, 10, 1)],
