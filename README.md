@@ -17,9 +17,10 @@
   CPUID module used: [flababah's cpuid.py](https://github.com/flababah/cpuid.py).
 
 ## CLI
-    ```console
-    $ sudo ./zenstates.py --no-gui [args...]
-    ```
+```console
+$ sudo ./zenstates.py --no-gui [args...]
+```
+
     usage: zenstates.py [-h] [--no-gui] [-l] [-p {0,1,2,3,4,5,6,7}] [--enable] [--disable] [-f FID] [-d DID] [-v VID] 
     [--smu-test-message]
 
