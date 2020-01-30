@@ -45,6 +45,8 @@
       --edc                 Set EDC limit (in A)
 
 ## GUI
+  ![Screenshot](ZenStates%20for%20Linux%20v1.0_006.png?raw=true "ZenStates for Linux screenshot")
+  
   To run the GUI, additional packages are needed:
   ```console
   $ sudo apt install pip3 python3-tk wheel
