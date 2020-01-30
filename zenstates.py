@@ -16,12 +16,16 @@ VID_MIN = 0x00
 
 PSTATES = range(0xC0010064, 0xC001006C)
 
-MSR_PMGT_MISC =         0xC0010292 # [32] PC6En
-MSR_CSTATE_CONFIG =     0xC0010296 # [22] CCR2_CC6EN [14] CCR1_CC6EN [6] CCR0_CC6EN
-MSR_HWCR =              0xC0010015
-SMU_CMD_ADDR =          0
-SMU_RSP_ADDR =          0
-SMU_ARG_ADDR =          0
+MSR_PMGT_MISC =             0xC0010292 # [32] PC6En
+MSR_CSTATE_CONFIG =         0xC0010296 # [22] CCR2_CC6EN [14] CCR1_CC6EN [6] CCR0_CC6EN
+MSR_HWCR =                  0xC0010015
+SMU_CMD_ADDR =              0
+SMU_RSP_ADDR =              0
+SMU_ARG_ADDR =              0
+SMU_CMD_OC_ENABLE =         0
+SMU_CMD_OC_DISABLE =        0
+SMU_CMD_OC_FREQ_ALL_CORES = 0
+SMU_CMD_OC_VID =            0
 
 
 def writesmureg(reg, value=0):
@@ -192,6 +196,30 @@ def setC6Package(enable):
         print('GUI: Set C6-Package: %s' % str(enable))
 
 
+def setPPT(val):
+    if int(val) > 0: writesmu(0x53, int(val) * 1000)
+
+
+def setTDC(val):
+    if int(val) > 0: writesmu(0x54, int(val) * 1000)
+
+
+def setEDC(val):
+    if int(val) > 0: writesmu(0x55, int(val) * 1000)
+
+
+# Not supported yet
+def setScalar(val):
+    if int(val) > 0 and int(val) <= 10: print('PBO Scalar')
+
+
+def setPboLimits(ppt, tdc, edc, scalar):
+    setPPT(ppt)
+    setTDC(tdc)
+    setEDC(edc)
+    setScalar(scalar)
+
+
 def setbits(val, base, length, new):
     return (val ^ (val & ((2 ** length - 1) << base))) + (new << base)
 
@@ -232,6 +260,10 @@ if _cpuid in [0x00870F10, 0x00870F10, 0x00830F00, 0x00830F10]:
     SMU_CMD_ADDR = 0x03B10524
     SMU_RSP_ADDR = 0x03B10570
     SMU_ARG_ADDR = 0x03B10A40
+    SMU_CMD_OC_ENABLE = 0x5A
+    SMU_CMD_OC_DISABLE = 0x5B
+    SMU_CMD_OC_FREQ_ALL_CORES = 0x5C
+    SMU_CMD_OC_VID = 0x61
 else:
     exit('CPU not supported!')
 
@@ -249,6 +281,9 @@ parser.add_argument('--c6-disable', action='store_true', help='Disable C-State C
 parser.add_argument('--smu-test-message', action='store_true', help='Send test message to the SMU (response 1 means "success")')
 parser.add_argument('--oc-frequency', default=550, type=int, help='Set overclock frequency (in MHz)')
 parser.add_argument('--oc-vid', default=-1, type=hex, help='Set overclock VID')
+parser.add_argument('--ppt', default=0, type=int, help='Set PPT limit (in W)')
+parser.add_argument('--tdc', default=0, type=int, help='Set TDC limit (in A)')
+parser.add_argument('--edc', default=0, type=int, help='Set EDC limit (in A)')
 
 args = parser.parse_args()
 
@@ -300,14 +335,28 @@ if args.smu_test_message:
     print('SMU response: %X' % writesmu(0x1))
 
 if args.oc_frequency > 550:
-    writesmu(0x5c, args.oc_frequency)
+    writesmu(SMU_CMD_OC_FREQ_ALL_CORES, args.oc_frequency)
     print('Set OC frequency to %sMHz' % args.oc_frequency)
 
 if args.oc_vid >= 0:
-    writesmu(0x61, args.oc_vid)
+    writesmu(SMU_CMD_OC_VID, args.oc_vid)
     print('Set OC VID to %X' % args.oc_vid)
 
-if not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable and not args.smu_test_message and args.no_gui:
+if args.ppt > 0:
+    setPPT(args.ppt)
+    print('Set PPT to %sW' % args.ppt)
+
+if args.tdc > 0:
+    setPPT(args.tdc)
+    print('Set TDC to %sA' % args.tdc)
+
+if args.edc > 0:
+    setPPT(args.edc)
+    print('Set TDC to %sA' % args.edc)
+
+if (not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable
+    and not args.smu_test_message and args.no_gui and not args.edc == 0 and not args.ppt == 0 
+    and not args.tdc == 0):
     parser.print_help()
 
 
@@ -396,18 +445,60 @@ if not args.no_gui:
         ])
 
     tab3_layout = [
+        [sg.Text('C6 States')],
         [sg.CBox(
             'C6-State Package',
             default=getC6package(),
             enable_events=True,
             key='c6StatePackage')
-         ],
+        ],
         [sg.CBox(
             'C6-State Core',
             default=getC6core(),
             enable_events=True,
             key='c6StateCore')
-         ]
+        ],
+        [sg.Text('Experimental')],
+        [
+            sg.Text(' PPT', size=(6, 1)),
+            sg.Spin(
+                values=[x for x in range(0, 1000, 1)],
+                initial_value=0,
+                enable_events=True,
+                disabled=False,
+                size=(5, 1),
+                key='ppt'),
+            sg.Text('A', size=(4, 1)),
+            sg.Text(' TDC', size=(6, 1)),
+            sg.Spin(
+                values=[x for x in range(0, 1000, 1)],
+                initial_value=0,
+                enable_events=True,
+                disabled=False,
+                size=(5, 1),
+                key='tdc'),
+            sg.Text('A', size=(4, 1)),
+        ],
+        [
+            sg.Text(' EDC', size=(6, 1)),
+            sg.Spin(
+                values=[x for x in range(0, 1000, 1)],
+                initial_value=0,
+                enable_events=True,
+                disabled=False,
+                size=(5, 1),
+                key='edc'),
+            sg.Text('W', size=(4, 1)),
+            sg.Text(' Scalar', size=(6, 1)),
+            sg.Spin(
+                values=[x for x in range(0, 10, 1)],
+                initial_value=0,
+                enable_events=True,
+                disabled=True,
+                size=(5, 1),
+                key='scalar')
+        ],
+        [sg.Text(' * 0 = Auto / No change')]
     ]
 
     # The TabgGroup layout - it must contain only Tabs
@@ -433,11 +524,11 @@ if not args.no_gui:
 
     def applyCpuSettings():
         if values['ocMode']:
-            writesmu(0x5a)
-            writesmu(0x5c, values['cpuOcFrequency'])
-            writesmu(0x61, values['cpuOcVid'])
+            writesmu(SMU_CMD_OC_ENABLE)
+            writesmu(SMU_CMD_OC_FREQ_ALL_CORES, values['cpuOcFrequency'])
+            writesmu(SMU_CMD_OC_VID, values['cpuOcVid'])
         else:
-            writesmu(0x5b)
+            writesmu(SMU_CMD_OC_DISABLE)
 
 
     def applyPstatesSettings():
@@ -448,6 +539,7 @@ if not args.no_gui:
     def applyPowerSettings():
         setC6Core(values['c6StateCore'])
         setC6Package(values['c6StatePackage'])
+        setPboLimits(values['ppt'], values['tdc'], values['edc'], values['scalar'])
 
 
     window_title = "%s v%s" % (APP_NAME, APP_VERSION)
