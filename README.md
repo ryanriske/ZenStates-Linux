@@ -38,8 +38,11 @@
       --c6-enable           Enable C-State C6
       --c6-disable          Disable C-State C6
       --smu-test-message    Send test message to the SMU (response 1 means 'success')
-      --set-oc-frequency    Set Overclock frequency (in MHz)
-      --set-oc-vid'         Set Overclock VID (in hex)
+      --oc-frequency        Set Overclock frequency (in MHz)
+      --oc-vid              Set Overclock VID (in hex)
+      --ppt                 Set PPT limit (in W)
+      --tdc                 Set TDC limit (in A)
+      --edc                 Set EDC limit (in A)
 
 ## GUI
   To run the GUI, additional packages are needed:
