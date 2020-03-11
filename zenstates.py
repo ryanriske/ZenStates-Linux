@@ -11,6 +11,8 @@ APP_VERSION = '1.0'
 
 FID_MAX = 0xFF
 FID_MIN = 0x10
+DID_MIN = 0x02
+DID_MAX = 0x0E
 VID_MAX = 0xC8 # 0.300V
 VID_MIN = 0x00
 
@@ -26,6 +28,8 @@ SMU_CMD_OC_ENABLE =         0
 SMU_CMD_OC_DISABLE =        0
 SMU_CMD_OC_FREQ_ALL_CORES = 0
 SMU_CMD_OC_VID =            0
+
+isOcFreqSupported = False
 
 
 def writesmureg(reg, value=0):
@@ -240,10 +244,12 @@ def hex(x):
     return int(x, 16)
 
 
-def setPstateGui(index, fid, vid):
+def setPstateGui(index, fid, did, vid):
     new = old = readmsr(PSTATES[index])
     if fid in range(FID_MIN, FID_MAX):
         new = setfid(new, fid)
+    if did in range(DID_MIN, DID_MAX):
+        new = setdid(new, did)
     if vid in range(VID_MIN, VID_MAX):
         new = setvid(new, vid)
     if new != old:
@@ -264,6 +270,16 @@ if _cpuid in [0x00870F10, 0x00870F10, 0x00830F00, 0x00830F10]:
     SMU_CMD_OC_DISABLE = 0x5B
     SMU_CMD_OC_FREQ_ALL_CORES = 0x5C
     SMU_CMD_OC_VID = 0x61
+    isOcFreqSupported = True;
+# RavenRidge
+elif _cpuid in [0x00810F00, 0x00810F10, 0x00820F00]:
+    SMU_CMD_ADDR = 0x03B10528
+    SMU_RSP_ADDR = 0x03B10564
+    SMU_ARG_ADDR = 0x03B10998
+    SMU_CMD_OC_ENABLE = 0x0
+    SMU_CMD_OC_DISABLE = 0x0
+    SMU_CMD_OC_FREQ_ALL_CORES = 0x0
+    SMU_CMD_OC_VID = 0x0
 else:
     exit('CPU not supported!')
 
@@ -409,7 +425,7 @@ if not args.no_gui:
         [   
             sg.Text('', size=(8, 1)),
             sg.Text('FID', size=(6, 1)),
-            sg.Text('DID', size=(6, 1), visible=False),
+            sg.Text('DID', size=(6, 1)),
             sg.Text('VID', size=(6, 1))
         ]
     ]
@@ -426,16 +442,14 @@ if not args.no_gui:
                 key='pstate%sFid' % str(p)
             ),
             sg.Spin(
-                values=[x for x in range(1, 14, -1)],
+                values=[x for x in range(DID_MAX, DID_MIN - 1, -2)],
                 initial_value=d[1],
-                enable_events=False,
-                disabled=True,
-                visible=False,
+                enable_events=True,
                 size=(5, 1),
                 key='pstate%sDid' % str(p)
             ),
             sg.Spin(
-                values=[x for x in range(VID_MAX, VID_MIN, -1)],
+                values=[x for x in range(VID_MAX, VID_MIN - 1, -1)],
                 initial_value=d[2],
                 enable_events=True,
                 size=(5, 1),
@@ -502,13 +516,21 @@ if not args.no_gui:
     ]
 
     # The TabgGroup layout - it must contain only Tabs
-    tab_group_layout = [
-        [
-            sg.Tab('CPU', tab1_layout, key='-TAB1-'),
-            sg.Tab('P-States', tab2_layout, key='-TAB2-'),
-            sg.Tab('Power', tab3_layout, key='-TAB3-')
+    if isOcFreqSupported:
+        tab_group_layout = [
+            [
+                sg.Tab('CPU', tab1_layout, key='-TAB1-'),
+                sg.Tab('P-States', tab2_layout, key='-TAB2-'),
+                sg.Tab('Power', tab3_layout, key='-TAB3-')
+            ]
         ]
-    ]
+    else:
+        tab_group_layout = [
+            [
+                sg.Tab('P-States', tab2_layout, key='-TAB2-'),
+                sg.Tab('Power', tab3_layout, key='-TAB3-')
+            ]
+        ]
 
     # The window layout - defines the entire window
     layout = [
@@ -533,7 +555,7 @@ if not args.no_gui:
 
     def applyPstatesSettings():
         for p in range(0, 3):
-            setPstateGui(p, values['pstate%sFid' % str(p)], values['pstate%sVid' % str(p)])
+            setPstateGui(p, values['pstate%sFid' % str(p)], values['pstate%sDid' % str(p)], values['pstate%sVid' % str(p)])
 
 
     def applyPowerSettings():
@@ -557,7 +579,7 @@ if not args.no_gui:
 
         # Apply button events
         if event == 'applyBtn' and values['-TABGROUP-'] == '-TAB1-':
-            applyCpuSettings()
+            if isOcFreqSupported: applyCpuSettings()
         if event == 'applyBtn' and values['-TABGROUP-'] == '-TAB2-':
             applyPstatesSettings()
         if event == 'applyBtn' and values['-TABGROUP-'] == '-TAB3-':
@@ -571,7 +593,7 @@ if not args.no_gui:
             window['cpuOcVoltageText'].update("%.5f V" % vidToVolts(values['cpuOcVid']))
 
         for p in range(0, 3):
-            if event in ['pstate%sFid' % str(p), 'pstate%sVid' % str(p)]:
+            if event in ['pstate%sFid' % str(p), 'pstate%sDid' % str(p), 'pstate%sVid' % str(p)]:
                 window['pstateDetails%s' % str(p)].update(
                     pstateToGuiString(
                         values['pstate%sFid' % str(p)],
