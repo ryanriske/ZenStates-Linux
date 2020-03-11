@@ -7,7 +7,7 @@ import subprocess
 import cpuid
 
 APP_NAME = 'ZenStates for Linux'
-APP_VERSION = '1.0'
+APP_VERSION = '1.1'
 
 FID_MAX = 0xFF
 FID_MIN = 0x10
