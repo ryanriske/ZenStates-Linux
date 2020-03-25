@@ -201,15 +201,15 @@ def setC6Package(enable):
 
 
 def setPPT(val):
-    if int(val) > 0: writesmu(0x53, int(val) * 1000)
+    if int(val) > -1: writesmu(0x53, int(val) * 1000)
 
 
 def setTDC(val):
-    if int(val) > 0: writesmu(0x54, int(val) * 1000)
+    if int(val) > -1: writesmu(0x54, int(val) * 1000)
 
 
 def setEDC(val):
-    if int(val) > 0: writesmu(0x55, int(val) * 1000)
+    if int(val) > -1: writesmu(0x55, int(val) * 1000)
 
 
 # Not supported yet
@@ -297,9 +297,9 @@ parser.add_argument('--c6-disable', action='store_true', help='Disable C-State C
 parser.add_argument('--smu-test-message', action='store_true', help='Send test message to the SMU (response 1 means "success")')
 parser.add_argument('--oc-frequency', default=550, type=int, help='Set overclock frequency (in MHz)')
 parser.add_argument('--oc-vid', default=-1, type=hex, help='Set overclock VID')
-parser.add_argument('--ppt', default=0, type=int, help='Set PPT limit (in W)')
-parser.add_argument('--tdc', default=0, type=int, help='Set TDC limit (in A)')
-parser.add_argument('--edc', default=0, type=int, help='Set EDC limit (in A)')
+parser.add_argument('--ppt', default=-1, type=int, help='Set PPT limit (in W)')
+parser.add_argument('--tdc', default=-1, type=int, help='Set TDC limit (in A)')
+parser.add_argument('--edc', default=-1, type=int, help='Set EDC limit (in A)')
 
 args = parser.parse_args()
 
@@ -358,21 +358,21 @@ if args.oc_vid >= 0:
     writesmu(SMU_CMD_OC_VID, args.oc_vid)
     print('Set OC VID to %X' % args.oc_vid)
 
-if args.ppt > 0:
+if args.ppt > -1:
     setPPT(args.ppt)
     print('Set PPT to %sW' % args.ppt)
 
-if args.tdc > 0:
+if args.tdc > -1:
     setTDC(args.tdc)
     print('Set TDC to %sA' % args.tdc)
 
-if args.edc > 0:
+if args.edc > -1:
     setEDC(args.edc)
     print('Set TDC to %sA' % args.edc)
 
 if (not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable
-    and not args.smu_test_message and args.no_gui and not args.edc == 0 and not args.ppt == 0 
-    and not args.tdc == 0):
+    and not args.smu_test_message and args.no_gui and not args.edc == -1 and not args.ppt == -1 
+    and not args.tdc == -1):
     parser.print_help()
 
 
@@ -476,8 +476,8 @@ if not args.no_gui:
         [
             sg.Text(' PPT', size=(6, 1)),
             sg.Spin(
-                values=[x for x in range(0, 1000, 1)],
-                initial_value=0,
+                values=[x for x in range(-1, 1000, 1)],
+                initial_value=-1,
                 enable_events=True,
                 disabled=False,
                 size=(5, 1),
@@ -485,8 +485,8 @@ if not args.no_gui:
             sg.Text('W', size=(4, 1)),
             sg.Text(' TDC', size=(6, 1)),
             sg.Spin(
-                values=[x for x in range(0, 1000, 1)],
-                initial_value=0,
+                values=[x for x in range(-1, 1000, 1)],
+                initial_value=-1,
                 enable_events=True,
                 disabled=False,
                 size=(5, 1),
@@ -496,8 +496,8 @@ if not args.no_gui:
         [
             sg.Text(' EDC', size=(6, 1)),
             sg.Spin(
-                values=[x for x in range(0, 1000, 1)],
-                initial_value=0,
+                values=[x for x in range(-1, 1000, 1)],
+                initial_value=-1,
                 enable_events=True,
                 disabled=False,
                 size=(5, 1),
@@ -512,7 +512,7 @@ if not args.no_gui:
                 size=(5, 1),
                 key='scalar')
         ],
-        [sg.Text(' * 0 = Auto / No change')]
+        [sg.Text(' * -1 = Auto / No change')]
     ]
 
     # The TabgGroup layout - it must contain only Tabs
