@@ -7,7 +7,7 @@ import subprocess
 import cpuid
 
 APP_NAME = 'ZenStates for Linux'
-APP_VERSION = '1.1'
+APP_VERSION = '1.11'
 
 FID_MAX = 0xFF
 FID_MIN = 0x10
@@ -363,11 +363,11 @@ if args.ppt > 0:
     print('Set PPT to %sW' % args.ppt)
 
 if args.tdc > 0:
-    setPPT(args.tdc)
+    setTDC(args.tdc)
     print('Set TDC to %sA' % args.tdc)
 
 if args.edc > 0:
-    setPPT(args.edc)
+    setEDC(args.edc)
     print('Set TDC to %sA' % args.edc)
 
 if (not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable
