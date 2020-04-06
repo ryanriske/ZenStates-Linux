@@ -281,7 +281,7 @@ elif _cpuid in [0x00810F00, 0x00810F10, 0x00820F00]:
     SMU_CMD_OC_FREQ_ALL_CORES = 0x0
     SMU_CMD_OC_VID = 0x0
 # Naples - P-States only
-if _cpuid in [0x00800F12]:
+elif _cpuid == 0x00800F10:
     SMU_CMD_ADDR = 0x0
     SMU_RSP_ADDR = 0x0
     SMU_ARG_ADDR = 0x0
