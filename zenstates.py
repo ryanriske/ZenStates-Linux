@@ -360,13 +360,13 @@ if args.smu_test_message:
     print('Sending test SMU message')
     print('SMU response: %X' % writesmu(0x1))
 
-if args.oc_frequency > 550:
-    writesmu(SMU_CMD_OC_FREQ_ALL_CORES, args.oc_frequency)
-    print('Set OC frequency to %sMHz' % args.oc_frequency)
-
 if args.oc_vid >= 0:
     writesmu(SMU_CMD_OC_VID, args.oc_vid)
     print('Set OC VID to %X' % args.oc_vid)
+
+if args.oc_frequency > 550:
+    writesmu(SMU_CMD_OC_FREQ_ALL_CORES, args.oc_frequency)
+    print('Set OC frequency to %sMHz' % args.oc_frequency)
 
 if args.ppt > -1:
     setPPT(args.ppt)
