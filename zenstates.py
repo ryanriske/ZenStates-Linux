@@ -33,14 +33,14 @@ isOcFreqSupported = False
 
 
 def writesmureg(reg, value=0):
-    subprocess.Popen(['setpci', '-v', '-s', '0:0.0', 'b8.l={:08X}'.format(reg)], stdout=subprocess.PIPE)
-    subprocess.Popen(['setpci', '-v', '-s', '0:0.0', 'bc.l={:08X}'.format(value)], stdout=subprocess.PIPE)
+    os.popen('setpci -v -s 0:0.0 b8.l={:08X}'.format(reg)).read()
+    os.popen('setpci -v -s 0:0.0 bc.l={:08X}'.format(value)).read()
 
 
 def readsmureg(reg):
-    subprocess.Popen(['setpci', '-v', '-s', '0:0.0', 'b8.l={:08X}'.format(reg)], stdout=subprocess.PIPE)
-    p = subprocess.Popen(['setpci', '-v', '-s', '0:0.0', 'bc.l'], stdout=subprocess.PIPE)
-    return hex(p.stdout.readline()[-9:][0:8])
+    os.popen('setpci -v -s 0:0.0 b8.l={:08X}'.format(reg)).read()
+    output = os.popen('setpci -v -s 0:0.0 bc.l').read()
+    return hex(output[-9:][0:8])
 
 
 def writesmu(cmd, value=0):
