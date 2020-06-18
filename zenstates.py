@@ -283,7 +283,7 @@ if _cpuid in [0x00800F11, 0x00800F00]:
     SMU_CMD_OC_VID = 0x28
     # depends on SMU version. Need to find which version disables the manual OC
     # turn it off for now
-    isOcFreqSupported = True
+    isOcFreqSupported = False
 
 # Zen | Naples - P-States only
 elif _cpuid == 0x00800F12:
