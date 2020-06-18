@@ -3,11 +3,10 @@ import struct
 import os
 import glob
 import argparse
-import subprocess
 import cpuid
 
 APP_NAME = 'ZenStates for Linux'
-APP_VERSION = '1.12'
+APP_VERSION = '1.3'
 
 FID_MAX = 0xFF
 FID_MIN = 0x10
@@ -30,7 +29,7 @@ SMU_CMD_OC_FREQ_ALL_CORES = 0
 SMU_CMD_OC_VID =            0
 
 isOcFreqSupported = False
-
+cpu_sockets = int(os.popen('cat /proc/cpuinfo | grep "physical id" | sort -u | wc -l').read())
 
 def writesmureg(reg, value=0):
     os.popen('setpci -v -s 0:0.0 b8.l={:08X}'.format(reg)).read()
@@ -166,8 +165,15 @@ def vidToVolts(vid):
 
 def getCpuid():
     eax, ebx, ecx, edx = cpuid.CPUID()(0x00000001)
-    print("CPUID: %08x" % eax)
+    print("CPUID: %08X" % eax)
     return eax
+
+
+def getPkgType():
+    eax, ebx, ecx, edx = cpuid.CPUID()(0x80000001)
+    type = ebx >> 28
+    print("Package Type: %01d" % type)
+    return type
 
 
 def getOcMode():
@@ -260,36 +266,89 @@ def setPstateGui(index, fid, did, vid):
         print('GUI: Set Pstate%s: %s' % (index, getPstateDetails(new)))
         writemsr(PSTATES[index], new)
 
-_cpuid = getCpuid() & 0xFFFFFFF0
-# Matisse, Castle Peak, Rome
-if _cpuid in [0x00870F10, 0x00870F10, 0x00830F00, 0x00830F10]:
+
+print('CPUs: %d' % cpu_sockets)
+
+_cpuid = getCpuid()
+_pkgtype = getPkgType()
+
+# Zen | Summit Ridge, Threadripper
+if _cpuid in [0x00800F11, 0x00800F00]:
+    SMU_CMD_ADDR = 0x03B10528
+    SMU_RSP_ADDR = 0x03B10564
+    SMU_ARG_ADDR = 0x03B10598
+    SMU_CMD_OC_ENABLE = 0x23
+    SMU_CMD_OC_DISABLE = 0x24
+    SMU_CMD_OC_FREQ_ALL_CORES = 0x26
+    SMU_CMD_OC_VID = 0x28
+    # depends on SMU version. Need to find which version disables the manual OC
+    # turn it off for now
+    isOcFreqSupported = True
+
+# Zen | Naples - P-States only
+elif _cpuid == 0x00800F12:
+    SMU_CMD_ADDR = 0x03B10528
+    SMU_RSP_ADDR = 0x03B10564
+    SMU_ARG_ADDR = 0x03B10598
+    isOcFreqSupported = False
+
+# Zen+ | Pinnacle Ridge, Colfax
+elif _cpuid == 0x00800F82:
+    SMU_CMD_ADDR = 0x03B1051C
+    SMU_RSP_ADDR = 0x03B10568
+    SMU_ARG_ADDR = 0x03B10590
+    SMU_CMD_OC_ENABLE = 0x63
+    SMU_CMD_OC_DISABLE = 0x64
+    isOcFreqSupported = True
+
+    if _pkgtype == 7: # Colfax
+        SMU_CMD_OC_FREQ_ALL_CORES = 0x68
+        SMU_CMD_OC_VID = 0x6A
+    else:
+        SMU_CMD_OC_FREQ_ALL_CORES = 0x6C
+        SMU_CMD_OC_VID = 0x6E
+
+# Zen 2 | Matisse, Rome, Castle Peak
+elif _cpuid in [0x00870F10, 0x00870F00, 0x00830F00, 0x00830F10]:
     SMU_CMD_ADDR = 0x03B10524
     SMU_RSP_ADDR = 0x03B10570
     SMU_ARG_ADDR = 0x03B10A40
-    SMU_CMD_OC_ENABLE = 0x5A
-    SMU_CMD_OC_DISABLE = 0x5B
-    SMU_CMD_OC_FREQ_ALL_CORES = 0x5C
-    SMU_CMD_OC_VID = 0x61
     isOcFreqSupported = True
-# RavenRidge
+
+    if _pkgtype == 7: # Rome
+        SMU_CMD_OC_FREQ_ALL_CORES = 0x18
+        SMU_CMD_OC_VID = 0x12
+    else:
+        SMU_CMD_OC_ENABLE = 0x5A
+        SMU_CMD_OC_DISABLE = 0x5B
+        SMU_CMD_OC_FREQ_ALL_CORES = 0x5C
+        SMU_CMD_OC_VID = 0x61
+
+# RavenRidge, RavenRidge2
 elif _cpuid in [0x00810F00, 0x00810F10, 0x00820F00]:
     SMU_CMD_ADDR = 0x03B10528
     SMU_RSP_ADDR = 0x03B10564
     SMU_ARG_ADDR = 0x03B10998
-    SMU_CMD_OC_ENABLE = 0x0
-    SMU_CMD_OC_DISABLE = 0x0
-    SMU_CMD_OC_FREQ_ALL_CORES = 0x0
-    SMU_CMD_OC_VID = 0x0
-# Naples - P-States only
-elif _cpuid == 0x00800F10:
-    SMU_CMD_ADDR = 0x0
-    SMU_RSP_ADDR = 0x0
-    SMU_ARG_ADDR = 0x0
-    SMU_CMD_OC_ENABLE = 0x0
-    SMU_CMD_OC_DISABLE = 0x0
-    SMU_CMD_OC_FREQ_ALL_CORES = 0x0
-    SMU_CMD_OC_VID = 0x0
     isOcFreqSupported = False
+
+# Picasso, Fenghuang
+elif _cpuid in [0x00810F81, 0x00850F00]:
+    SMU_CMD_ADDR = 0x03B10A20
+    SMU_RSP_ADDR = 0x03B10A80
+    SMU_ARG_ADDR = 0x03B10A88
+    SMU_CMD_OC_ENABLE = 0x69
+    SMU_CMD_OC_DISABLE = 0x6A
+    SMU_CMD_OC_FREQ_ALL_CORES = 0x7D
+    SMU_CMD_OC_VID = 0x7F
+    isOcFreqSupported = True
+
+# Renoir
+elif _cpuid in [0x00860F01]:
+    SMU_CMD_ADDR = 0x03B10A20
+    SMU_RSP_ADDR = 0x03B10A80
+    SMU_ARG_ADDR = 0x03B10A88
+    isOcFreqSupported = False
+
 else:
     exit('CPU not supported!')
 
@@ -339,10 +398,10 @@ if args.pstate >= 0:
         new = setvid(new, args.vid)
         print('Setting VID to %X' % args.vid)
     if new != old:
-        if not (readmsr(0xC0010015) & (1 << 21)):
+        if not (readmsr(MSR_HWCR) & (1 << 21)):
             print('Locking TSC frequency')
             for c in range(len(glob.glob('/dev/cpu/[0-9]*/msr'))):
-                writemsr(0xC0010015, readmsr(0xC0010015, c) | (1 << 21), c)
+                writemsr(MSR_HWCR, readmsr(MSR_HWCR, c) | (1 << 21), c)
         print('New P' + str(args.pstate) + ': ' + pstate2str(new))
         writemsr(PSTATES[args.pstate], new)
 
