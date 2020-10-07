@@ -437,11 +437,11 @@ if args.tdc > -1:
 
 if args.edc > -1:
     setEDC(args.edc)
-    print('Set TDC to %sA' % args.edc)
+    print('Set EDC to %sA' % args.edc)
 
 if (not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_disable
-    and not args.smu_test_message and args.no_gui and not args.edc == -1 and not args.ppt == -1 
-    and not args.tdc == -1):
+    and not args.smu_test_message and args.no_gui and args.edc == -1 and args.ppt == -1 
+    and args.tdc == -1):
     parser.print_help()
 
 
