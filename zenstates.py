@@ -172,6 +172,10 @@ def vidToVolts(vid):
     return 1.55 - vid * 0.00625
 
 
+def voltsToVid(volts):
+    return (1.55 - volts) / 0.00625
+
+
 def getCpuid():
     eax, ebx, ecx, edx = cpuid.CPUID()(0x00000001)
     print("CPUID: %08X" % eax)
@@ -186,7 +190,7 @@ def getPkgType():
 
 
 def getOcMode():
-    return readsmu(0x6c) == 0
+    return readsmu(SMU_CMD_GET_PBO_SCALAR) == 0
 
 
 def getC6core():
@@ -306,16 +310,20 @@ elif _cpuid == 0x00800F82:
     SMU_CMD_ADDR = 0x03B1051C
     SMU_RSP_ADDR = 0x03B10568
     SMU_ARG_ADDR = 0x03B10590
-    SMU_CMD_OC_ENABLE = 0x63
-    SMU_CMD_OC_DISABLE = 0x64
+    # SMU_CMD_OC_ENABLE = 0x63
+    # SMU_CMD_OC_DISABLE = 0x64
     isOcFreqSupported = True
 
     if _pkgtype == 7: # Colfax
+        SMU_CMD_OC_ENABLE = 0x67 # based on assumption
         SMU_CMD_OC_FREQ_ALL_CORES = 0x68
         SMU_CMD_OC_VID = 0x6A
+        SMU_CMD_GET_PBO_SCALAR = 0x70
     else:
+        SMU_CMD_OC_ENABLE = 0x6B
         SMU_CMD_OC_FREQ_ALL_CORES = 0x6C
         SMU_CMD_OC_VID = 0x6E
+        SMU_CMD_GET_PBO_SCALAR = 0x6F
 
 # Zen 2 | Matisse, Rome, Castle Peak
 elif _cpuid in [0x00870F10, 0x00870F00, 0x00830F00, 0x00830F10]:
@@ -324,7 +332,7 @@ elif _cpuid in [0x00870F10, 0x00870F00, 0x00830F00, 0x00830F10]:
     SMU_ARG_ADDR = 0x03B10A40
     isOcFreqSupported = True
 
-    if _pkgtype == 7: # Rome
+    if _pkgtype == 7: # Rome ES
         SMU_CMD_OC_FREQ_ALL_CORES = 0x18
         SMU_CMD_OC_VID = 0x12
     else:
@@ -332,6 +340,7 @@ elif _cpuid in [0x00870F10, 0x00870F00, 0x00830F00, 0x00830F10]:
         SMU_CMD_OC_DISABLE = 0x5B
         SMU_CMD_OC_FREQ_ALL_CORES = 0x5C
         SMU_CMD_OC_VID = 0x61
+        SMU_CMD_GET_PBO_SCALAR = 0x6C
 
 # RavenRidge, RavenRidge2
 elif _cpuid in [0x00810F00, 0x00810F10, 0x00820F00]:
@@ -349,6 +358,7 @@ elif _cpuid in [0x00810F81, 0x00850F00]:
     SMU_CMD_OC_DISABLE = 0x6A
     SMU_CMD_OC_FREQ_ALL_CORES = 0x7D
     SMU_CMD_OC_VID = 0x7F
+    SMU_CMD_GET_PBO_SCALAR = 0x62
     isOcFreqSupported = True
 
 # Renoir
@@ -356,6 +366,7 @@ elif _cpuid in [0x00860F01]:
     SMU_CMD_ADDR = 0x03B10A20
     SMU_RSP_ADDR = 0x03B10A80
     SMU_ARG_ADDR = 0x03B10A88
+    SMU_CMD_GET_PBO_SCALAR = 0xF
     isOcFreqSupported = False
 
 else:
