@@ -4,9 +4,7 @@ import os
 import glob
 import argparse
 import cpuid
-
-APP_NAME = 'ZenStates for Linux'
-APP_VERSION = '1.3'
+import config as cfg
 
 FID_MAX = 0xFF
 FID_MIN = 0x10
@@ -35,10 +33,19 @@ def writesmureg(reg, value=0):
     os.popen('setpci -v -s 0:0.0 b8.l={:08X}'.format(reg)).read()
     os.popen('setpci -v -s 0:0.0 bc.l={:08X}'.format(value)).read()
 
+    if cpu_sockets == 2:
+        os.popen('setpci -v -s A0:0.0 b8.l={:08X}'.format(reg)).read()
+        os.popen('setpci -v -s A0:0.0 bc.l={:08X}'.format(value)).read()
+
 
 def readsmureg(reg):
     os.popen('setpci -v -s 0:0.0 b8.l={:08X}'.format(reg)).read()
     output = os.popen('setpci -v -s 0:0.0 bc.l').read()
+
+    if cpu_sockets == 2:
+        os.popen('setpci -v -s A0:0.0 b8.l={:08X}'.format(reg)).read()
+        os.popen('setpci -v -s A0:0.0 bc.l').read()
+
     return hex(output[-9:][0:8])
 
 
@@ -163,6 +170,10 @@ def vidToVolts(vid):
     return 1.55 - vid * 0.00625
 
 
+def voltsToVid(volts):
+    return (1.55 - volts) / 0.00625
+
+
 def getCpuid():
     eax, ebx, ecx, edx = cpuid.CPUID()(0x00000001)
     print("CPUID: %08X" % eax)
@@ -177,7 +188,7 @@ def getPkgType():
 
 
 def getOcMode():
-    return readsmu(0x6c) == 0
+    return readsmu(SMU_CMD_GET_PBO_SCALAR) == 0
 
 
 def getC6core():
@@ -297,16 +308,20 @@ elif _cpuid == 0x00800F82:
     SMU_CMD_ADDR = 0x03B1051C
     SMU_RSP_ADDR = 0x03B10568
     SMU_ARG_ADDR = 0x03B10590
-    SMU_CMD_OC_ENABLE = 0x63
-    SMU_CMD_OC_DISABLE = 0x64
+    # SMU_CMD_OC_ENABLE = 0x63
+    # SMU_CMD_OC_DISABLE = 0x64
     isOcFreqSupported = True
 
     if _pkgtype == 7: # Colfax
+        SMU_CMD_OC_ENABLE = 0x67 # based on assumption
         SMU_CMD_OC_FREQ_ALL_CORES = 0x68
         SMU_CMD_OC_VID = 0x6A
+        SMU_CMD_GET_PBO_SCALAR = 0x70
     else:
+        SMU_CMD_OC_ENABLE = 0x6B
         SMU_CMD_OC_FREQ_ALL_CORES = 0x6C
         SMU_CMD_OC_VID = 0x6E
+        SMU_CMD_GET_PBO_SCALAR = 0x6F
 
 # Zen 2 | Matisse, Rome, Castle Peak
 elif _cpuid in [0x00870F10, 0x00870F00, 0x00830F00, 0x00830F10]:
@@ -315,7 +330,7 @@ elif _cpuid in [0x00870F10, 0x00870F00, 0x00830F00, 0x00830F10]:
     SMU_ARG_ADDR = 0x03B10A40
     isOcFreqSupported = True
 
-    if _pkgtype == 7: # Rome
+    if _pkgtype == 7: # Rome ES
         SMU_CMD_OC_FREQ_ALL_CORES = 0x18
         SMU_CMD_OC_VID = 0x12
     else:
@@ -323,6 +338,7 @@ elif _cpuid in [0x00870F10, 0x00870F00, 0x00830F00, 0x00830F10]:
         SMU_CMD_OC_DISABLE = 0x5B
         SMU_CMD_OC_FREQ_ALL_CORES = 0x5C
         SMU_CMD_OC_VID = 0x61
+        SMU_CMD_GET_PBO_SCALAR = 0x6C
 
 # RavenRidge, RavenRidge2
 elif _cpuid in [0x00810F00, 0x00810F10, 0x00820F00]:
@@ -340,6 +356,7 @@ elif _cpuid in [0x00810F81, 0x00850F00]:
     SMU_CMD_OC_DISABLE = 0x6A
     SMU_CMD_OC_FREQ_ALL_CORES = 0x7D
     SMU_CMD_OC_VID = 0x7F
+    SMU_CMD_GET_PBO_SCALAR = 0x62
     isOcFreqSupported = True
 
 # Renoir
@@ -347,6 +364,7 @@ elif _cpuid in [0x00860F01]:
     SMU_CMD_ADDR = 0x03B10A20
     SMU_RSP_ADDR = 0x03B10A80
     SMU_ARG_ADDR = 0x03B10A88
+    SMU_CMD_GET_PBO_SCALAR = 0xF
     isOcFreqSupported = False
 
 else:
@@ -448,226 +466,73 @@ if (not args.list and args.pstate == -1 and not args.c6_enable and not args.c6_d
 ###############################
 # GUI
 if not args.no_gui:
-    import PySimpleGUI as sg
+    import gi
 
-    _oc_mode = getOcMode()
-    if _oc_mode:
-        _default_vid = getCurrentVid()
-        _ratio = getRatio(0xC0010293)
-    else:
-        _default_vid = getPstateVid(0)
-        _ratio = getRatio(PSTATES[0])
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk
 
-    _current_freq = int(_ratio * 100)
+    builder = Gtk.Builder()
+    builder.add_from_file("gtk.glade")
 
-    #sg.theme('Dark Teal 9')
-    sg.set_options(icon='icon.png', element_padding=(5, 5), margins=(1, 1), border_width=0)
+    oc_mode_checkbox = builder.get_object("ocModeCheckbox")
+    frequency_input = builder.get_object("frequencyInput")
+    voltage_input = builder.get_object("voltageInput")
+    tabs = builder.get_object("tabs")
 
-    # The tab 1, 2, 3 layouts - what goes inside the tab
-    tab1_layout = [
-        [sg.CBox('OC Mode', default=_oc_mode, key='ocMode', enable_events=True)],
-        [
-            sg.Text(' All Core Frequency', size=(18, 1)),
-            sg.Spin(
-                values=[x for x in range(550, 7000, 25)],
-                initial_value=_current_freq,
-                enable_events=True,
-                disabled=not _oc_mode,
-                size=(5, 1),
-                key='cpuOcFrequency'),
-            sg.Text('MHz'),
-        ],
-        [
-            sg.Text(' Overclock VID', size=(18, 1)),
-            sg.Spin(
-                values=[x for x in range(VID_MAX, VID_MIN, -1)],
-                initial_value=_default_vid,
-                enable_events=True,
-                disabled=not _oc_mode,
-                size=(5, 1),
-                key='cpuOcVid'),
-            sg.Text("%.5f V" % vidToVolts(_default_vid), key='cpuOcVoltageText'),
-        ],
-    ]
 
-    tab2_layout = [
-        [   
-            sg.Text('', size=(8, 1)),
-            sg.Text('FID', size=(6, 1)),
-            sg.Text('DID', size=(6, 1)),
-            sg.Text('VID', size=(6, 1))
-        ]
-    ]
-    for p in range(0, 3):
-        state = readmsr(PSTATES[p])
-        d = getPstateDetails(state)
-        tab2_layout.append([
-            sg.Text(' P-State%s' % str(p), size=(8, 1)),
-            sg.Spin(
-                values=[x for x in range(FID_MIN, FID_MAX, 1)],
-                initial_value=d[0],
-                enable_events=True,
-                size=(5, 1),
-                key='pstate%sFid' % str(p)
-            ),
-            sg.Spin(
-                values=[x for x in range(DID_MAX, DID_MIN - 1, -2)],
-                initial_value=d[1],
-                enable_events=True,
-                size=(5, 1),
-                key='pstate%sDid' % str(p)
-            ),
-            sg.Spin(
-                values=[x for x in range(VID_MAX, VID_MIN - 1, -1)],
-                initial_value=d[2],
-                enable_events=True,
-                size=(5, 1),
-                key='pstate%sVid' % str(p)
-            ),
-            sg.Text(pstateToGuiString(d[0], d[1], d[2]), key='pstateDetails%s' % str(p))
-        ])
+    class Handler:
+        def onDestroy(self, *args):
+            Gtk.main_quit()
 
-    tab3_layout = [
-        [sg.Text('C6 States')],
-        [sg.CBox(
-            'C6-State Package',
-            default=getC6package(),
-            enable_events=True,
-            key='c6StatePackage')
-        ],
-        [sg.CBox(
-            'C6-State Core',
-            default=getC6core(),
-            enable_events=True,
-            key='c6StateCore')
-        ],
-        [sg.Text('Experimental')],
-        [
-            sg.Text(' PPT', size=(6, 1)),
-            sg.Spin(
-                values=[x for x in range(-1, 1000, 1)],
-                initial_value=-1,
-                enable_events=True,
-                disabled=False,
-                size=(5, 1),
-                key='ppt'),
-            sg.Text('W', size=(4, 1)),
-            sg.Text(' TDC', size=(6, 1)),
-            sg.Spin(
-                values=[x for x in range(-1, 1000, 1)],
-                initial_value=-1,
-                enable_events=True,
-                disabled=False,
-                size=(5, 1),
-                key='tdc'),
-            sg.Text('A', size=(4, 1)),
-        ],
-        [
-            sg.Text(' EDC', size=(6, 1)),
-            sg.Spin(
-                values=[x for x in range(-1, 1000, 1)],
-                initial_value=-1,
-                enable_events=True,
-                disabled=False,
-                size=(5, 1),
-                key='edc'),
-            sg.Text('A', size=(4, 1)),
-            sg.Text(' Scalar', size=(6, 1)),
-            sg.Spin(
-                values=[x for x in range(0, 10, 1)],
-                initial_value=0,
-                enable_events=True,
-                disabled=True,
-                size=(5, 1),
-                key='scalar')
-        ],
-        [sg.Text(' * -1 = Auto / No change')]
-    ]
+        def onRefreshButtonClicked(self):
+            App.init_values()
 
-    # The TabgGroup layout - it must contain only Tabs
-    if isOcFreqSupported:
-        tab_group_layout = [
-            [
-                sg.Tab('CPU', tab1_layout, key='-TAB1-'),
-                sg.Tab('P-States', tab2_layout, key='-TAB2-'),
-                sg.Tab('Power', tab3_layout, key='-TAB3-')
-            ]
-        ]
-    else:
-        tab_group_layout = [
-            [
-                sg.Tab('P-States', tab2_layout, key='-TAB2-'),
-                sg.Tab('Power', tab3_layout, key='-TAB3-')
-            ]
-        ]
+        def on_ocModeCheckbox_toggled(self):
+            active = oc_mode_checkbox.get_active()
+            frequency_input.set_sensitive(active)
+            voltage_input.set_sensitive(active)
 
-    # The window layout - defines the entire window
-    layout = [
-        [sg.TabGroup(tab_group_layout,
-                     # selected_title_color='blue',
-                     # selected_background_color='red',
-                     # tab_background_color='green',
-                     enable_events=True,
-                     # font='Courier 18',
-                     key='-TABGROUP-')],
-        [sg.Button('Apply', key='applyBtn'), sg.Button('Cancel')]
-    ]
+        def on_applyButton_clicked(self):
+            if (tabs.get_current_page() == 0):
+                apply_cpu_tab_settings()
 
-    def applyCpuSettings():
-        if values['ocMode']:
+
+    class App:
+        def init_values():
+            _oc_mode = getOcMode()
+            if _oc_mode:
+                _default_vid = getCurrentVid()
+                _ratio = getRatio(0xC0010293)
+            else:
+                _default_vid = getPstateVid(0)
+                _ratio = getRatio(PSTATES[0])
+
+            _current_freq = int(_ratio * 100)
+            _current_voltage = vidToVolts(_default_vid)
+
+            oc_mode_checkbox.set_active(_oc_mode)
+            frequency_input.set_value(_current_freq)
+            voltage_input.set_value(_current_voltage)
+
+            Handler.on_ocModeCheckbox_toggled(Handler)
+
+    def apply_cpu_tab_settings():
+        if oc_mode_checkbox.get_active():
+            freq = int(frequency_input.get_value())
+            vid = int(voltsToVid(voltage_input.get_value()))
             writesmu(SMU_CMD_OC_ENABLE)
-            writesmu(SMU_CMD_OC_FREQ_ALL_CORES, values['cpuOcFrequency'])
-            writesmu(SMU_CMD_OC_VID, values['cpuOcVid'])
+            writesmu(SMU_CMD_OC_FREQ_ALL_CORES, freq)
+            writesmu(SMU_CMD_OC_VID, vid)
         else:
             writesmu(SMU_CMD_OC_DISABLE)
 
 
-    def applyPstatesSettings():
-        for p in range(0, 3):
-            setPstateGui(p, values['pstate%sFid' % str(p)], values['pstate%sDid' % str(p)], values['pstate%sVid' % str(p)])
+    builder.connect_signals(Handler)
 
+    App.init_values()
 
-    def applyPowerSettings():
-        setC6Core(values['c6StateCore'])
-        setC6Package(values['c6StatePackage'])
-        setPboLimits(values['ppt'], values['tdc'], values['edc'], values['scalar'])
+    window = builder.get_object("appWindow")
+    window.set_title(cfg.APP_NAME + " v" + cfg.APP_VERSION);
+    window.show_all()
 
-
-    window_title = "%s v%s" % (APP_NAME, APP_VERSION)
-    window = sg.Window(window_title, layout)
-    print('GUI: %s initialized' % window_title)
-
-    while True:     # Event Loop
-        event, values = window.read()
-        # print(event)
-        # print(values)
-
-        # Cancel or close event
-        if event in (None, 'Cancel'):
-            break
-
-        # Apply button events
-        if event == 'applyBtn' and values['-TABGROUP-'] == '-TAB1-':
-            if isOcFreqSupported: applyCpuSettings()
-        if event == 'applyBtn' and values['-TABGROUP-'] == '-TAB2-':
-            applyPstatesSettings()
-        if event == 'applyBtn' and values['-TABGROUP-'] == '-TAB3-':
-            applyPowerSettings()
-
-        # UI elements state change
-        if event == 'ocMode':
-            window['cpuOcFrequency'].update(disabled=(not values['ocMode']))
-            window['cpuOcVid'].update(disabled=(not values['ocMode']))
-        if event == 'cpuOcVid':
-            window['cpuOcVoltageText'].update("%.5f V" % vidToVolts(values['cpuOcVid']))
-
-        for p in range(0, 3):
-            if event in ['pstate%sFid' % str(p), 'pstate%sDid' % str(p), 'pstate%sVid' % str(p)]:
-                window['pstateDetails%s' % str(p)].update(
-                    pstateToGuiString(
-                        values['pstate%sFid' % str(p)],
-                        values['pstate%sDid' % str(p)],
-                        values['pstate%sVid' % str(p)]
-                    )
-                )
-    window.close()
+    Gtk.main()
