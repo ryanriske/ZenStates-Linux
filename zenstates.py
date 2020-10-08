@@ -35,10 +35,19 @@ def writesmureg(reg, value=0):
     os.popen('setpci -v -s 0:0.0 b8.l={:08X}'.format(reg)).read()
     os.popen('setpci -v -s 0:0.0 bc.l={:08X}'.format(value)).read()
 
+    if cpu_sockets == 2:
+        os.popen('setpci -v -s A0:0.0 b8.l={:08X}'.format(reg)).read()
+        os.popen('setpci -v -s A0:0.0 bc.l={:08X}'.format(value)).read()
+
 
 def readsmureg(reg):
     os.popen('setpci -v -s 0:0.0 b8.l={:08X}'.format(reg)).read()
     output = os.popen('setpci -v -s 0:0.0 bc.l').read()
+
+    if cpu_sockets == 2:
+        os.popen('setpci -v -s A0:0.0 b8.l={:08X}'.format(reg)).read()
+        os.popen('setpci -v -s A0:0.0 bc.l').read()
+
     return hex(output[-9:][0:8])
 
 
